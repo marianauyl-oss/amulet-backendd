@@ -13,8 +13,10 @@ load_dotenv()
 app = Flask(__name__, static_folder='.')
 CORS(app)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///amulet.db')
+# Use DATABASE_URL from environment, fallback to SQLite in volume for Railway
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:////app/storage/amulet.db')
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'secret')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
 # ---------- DB init + seed ----------
@@ -415,7 +417,7 @@ def adm_backup():
                 "id": x.id, "key": x.key, "mac_id": x.mac_id or "",
                 "credit": x.credit, "active": x.active,
                 "created_at": x.created_at.isoformat() if x.created_at else "",
-                "updated_at": x.updated_at.isoformat() if x.updated_at else ""
+                "updated_at": x.updated_at.isoformat() if x.created_at else ""
             } for x in License.query.all()],
             "apikeys": [{"id": x.id, "api_key": x.api_key, "status": x.status} for x in ApiKey.query.all()],
             "voices": [{"id": x.id, "name": x.name, "voice_id": x.voice_id, "active": x.active} for x in Voice.query.all()],
@@ -509,4 +511,4 @@ def static_files(filename):
     return send_from_directory('.', filename)
 
 if __name__ == "__main__":
-    app.run(port=3030, debug=True)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 3030)), debug=True)
