@@ -22,7 +22,19 @@ let currentLicEditId = null;
 async function loadLicenses(){
   try{
     const q = encodeURIComponent(el("licSearch").value || "");
-    const data = await jfetch(`/admin_api/licenses?q=${q}`);
+    const minCredit = el("licMinCredit").value || "";
+    const maxCredit = el("licMaxCredit").value || "";
+    const active = el("licActive").value || "";
+    const dateFrom = el("licDateFrom").value || "";
+    const dateTo = el("licDateTo").value || "";
+    let url = `/admin_api/licenses?q=${q}`;
+    if (minCredit) url += `&min_credit=${minCredit}`;
+    if (maxCredit) url += `&max_credit=${maxCredit}`;
+    if (active) url += `&active=${active}`;
+    if (dateFrom) url += `&date_from=${dateFrom}`;
+    if (dateTo) url += `&date_to=${dateTo}`;
+
+    const data = await jfetch(url);
     const tb = el("licTbody");
     tb.innerHTML = "";
     data.forEach(row=>{
@@ -172,7 +184,7 @@ async function deleteApiKey(id){
   try{
     await jfetch(`/admin_api/apikeys/${id}`, "DELETE");
     await loadApiKeys();
-  }catch(e){ toast("Delete key error: "+e.message); }
+  }catch(e){ toast("Delete apikey error: "+e.message); }
 }
 
 // ================= Voices =================
@@ -188,7 +200,7 @@ async function loadVoices(){
       tr.innerHTML = `
         <td>${row.id}</td>
         <td>${row.name}</td>
-        <td><code>${row.voice_id}</code></td>
+        <td><code class="copyable" onclick="copyToClipboard('${row.voice_id.replace(/'/g, "\\'")}')">${row.voice_id}</code></td>
         <td>${row.active ? "Active" : "Inactive"}</td>
         <td class="text-nowrap">
           <button class="btn btn-sm btn-outline-primary me-1" onclick='editVoice(${row.id},"${row.name.replace(/"/g,'&quot;')}","${row.voice_id.replace(/"/g,'&quot;')}",${row.active})'>✏️</button>
