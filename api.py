@@ -1,144 +1,72 @@
-from flask import Flask, jsonify, request, send_from_directory, Response
-from flask_sqlalchemy import SQLAlchemy
-from flask_cors import CORS
-from functools import wraps
-from datetime import datetime
-import os
+from flask import Blueprint, request, jsonify
+from models import db, License, ApiKey, Voice, Config, ActivityLog
 
-# ---------------- CONFIG ----------------
-app = Flask(__name__)
-CORS(app)
+api_bp = Blueprint("api_bp", __name__)
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///amulet.db")
+def _ok(**kw): return {"ok": True, **kw}
+def _err(msg, code=400): return jsonify({"ok": False, "msg": msg}), code
 
-# Normalize for SQLAlchemy (Render/PostgreSQL fix)
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://")
-elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://")
+@api_bp.post("/")
+def router():
+    data = request.get_json(force=True, silent=True) or {}
+    action = (data.get("action") or "").strip()
 
-app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "amulet_secret")
+    if action == "get_config":
+        c = Config.query.first()
+        if not c: c = Config(); db.session.add(c); db.session.commit()
+        return jsonify(_ok(config=c.as_dict()))
 
-db = SQLAlchemy(app)
+    if action == "get_voices":
+        vs = [v.as_dict() for v in Voice.query.filter_by(active=True).all()]
+        return jsonify(_ok(voices=[{"Назва голосу": v["name"], "ID ГОЛОСУ": v["voice_id"]} for v in vs]))
 
-# ---------------- MODELS ----------------
-from models import License, ApiKey, Voice, Config, ActivityLog
+    if action == "check":
+        key = (data.get("key") or "").strip()
+        mac = (data.get("mac") or "").strip()
+        lic = License.query.filter_by(key=key).first()
+        if not lic: return _err("license not found", 404)
+        if not lic.active: return _err("license inactive", 403)
+        if not lic.mac_id:
+            lic.mac_id = mac; db.session.commit()
+        return jsonify(_ok(credit=lic.credit, active=lic.active))
 
-with app.app_context():
-    db.create_all()
-
-# ---------------- AUTH ----------------
-def check_auth(username, password):
-    return username == os.getenv("ADMIN_USER", "admin") and password == os.getenv("ADMIN_PASS", "1234")
-
-def authenticate():
-    return Response('Login Required', 401, {'WWW-Authenticate': 'Basic realm="Amulet Admin"'})
-
-def requires_auth(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        auth = request.authorization
-        if not auth or not check_auth(auth.username, auth.password):
-            return authenticate()
-        return f(*args, **kwargs)
-    return decorated
-
-# ---------------- ROUTES ----------------
-
-@app.route("/")
-def index():
-    return jsonify({
-        "status": "ok",
-        "message": "✅ Amulet Backend running successfully",
-        "database": app.config["SQLALCHEMY_DATABASE_URI"]
-    })
-
-@app.route("/healthz")
-def healthz():
-    return jsonify({"status": "healthy"}), 200
-
-# ---------------- API ----------------
-
-@app.route("/check", methods=["POST"])
-def check_license():
-    data = request.get_json()
-    key = data.get("key")
-    mac = data.get("mac")
-
-    license = License.query.filter_by(key=key).first()
-    if not license:
-        return jsonify({"status": "error", "message": "License not found"}), 404
-
-    if not license.active:
-        return jsonify({"status": "error", "message": "License inactive"}), 403
-
-    # Link MAC if new
-    if not license.mac_id:
-        license.mac_id = mac
+    if action == "debit":
+        key = (data.get("key") or "").strip()
+        model = (data.get("model") or "default").strip()
+        count = int(data.get("count") or 0)
+        lic = License.query.filter_by(key=key).first()
+        if not lic or not lic.active: return _err("invalid license", 403)
+        if lic.credit < count:       return _err("not enough credit", 402)
+        lic.credit -= count
+        db.session.add(ActivityLog(license_id=lic.id, action="debit", model=model, char_count=count, delta=-count))
         db.session.commit()
+        return jsonify(_ok(debited=count, credit=lic.credit))
 
-    return jsonify({
-        "status": "ok",
-        "key": key,
-        "credit": license.credit,
-        "active": license.active
-    })
+    if action == "refund":
+        key = (data.get("key") or "").strip()
+        model = (data.get("model") or "default").strip()
+        count = int(data.get("count") or 0)
+        lic = License.query.filter_by(key=key).first()
+        if not lic: return _err("invalid license", 403)
+        lic.credit += count
+        db.session.add(ActivityLog(license_id=lic.id, action="refund", model=model, char_count=count, delta=count, details=data.get("reason") or ""))  # noqa
+        db.session.commit()
+        return jsonify(_ok(credit=lic.credit))
 
-@app.route("/debit", methods=["POST"])
-def debit():
-    data = request.get_json()
-    key = data.get("key")
-    count = data.get("count", 0)
-    model = data.get("model", "default")
+    if action == "next_api_key":
+        ak = ApiKey.query.filter_by(status="active").order_by(ApiKey.id.desc()).first()
+        if not ak: return _err("no active api keys", 404)
+        return jsonify(_ok(api_key=ak.api_key))
 
-    license = License.query.filter_by(key=key).first()
-    if not license or not license.active:
-        return jsonify({"status": "error", "message": "Invalid license"}), 403
+    if action == "release_api_key":
+        # no-op (сумісність із клієнтом)
+        return jsonify(_ok(released=True))
 
-    if license.credit < count:
-        return jsonify({"status": "error", "message": "Not enough credit"}), 402
+    if action == "deactivate_api_key":
+        k = (data.get("api_key") or "").strip()
+        ak = ApiKey.query.filter_by(api_key=k).first()
+        if not ak: return _err("api key not found", 404)
+        ak.status = "inactive"; db.session.commit()
+        return jsonify(_ok(status="inactive"))
 
-    license.credit -= count
-    log = ActivityLog(license_key=key, model=model, char_count=count, delta=-count)
-    db.session.add(log)
-    db.session.commit()
-
-    return jsonify({"status": "ok", "remaining": license.credit})
-
-@app.route("/refund", methods=["POST"])
-def refund():
-    data = request.get_json()
-    key = data.get("key")
-    count = data.get("count", 0)
-    model = data.get("model", "default")
-
-    license = License.query.filter_by(key=key).first()
-    if not license:
-        return jsonify({"status": "error", "message": "Invalid license"}), 403
-
-    license.credit += count
-    log = ActivityLog(license_key=key, model=model, char_count=count, delta=count)
-    db.session.add(log)
-    db.session.commit()
-
-    return jsonify({"status": "ok", "credit": license.credit})
-
-@app.route("/get_voices", methods=["GET"])
-def get_voices():
-    voices = Voice.query.all()
-    return jsonify([{"name": v.name, "voice_id": v.voice_id} for v in voices])
-
-@app.route("/admin")
-@requires_auth
-def admin_page():
-    return send_from_directory(".", "admin.html")
-
-@app.route("/<path:path>")
-def static_files(path):
-    return send_from_directory(".", path)
-
-# ---------------- RUN ----------------
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    return _err("unknown action", 400)

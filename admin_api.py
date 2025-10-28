@@ -1,11 +1,22 @@
-from flask import Blueprint, request, jsonify, Response
+import os, json
 from datetime import datetime, timedelta
+from flask import Blueprint, request, jsonify, Response
 from sqlalchemy import or_
 from models import db, License, ApiKey, Voice, Config, ActivityLog
 
-admin_bp = Blueprint("admin_bp", __name__)
+admin_api = Blueprint("admin_api", __name__)
 
-def parse_date(dstr, end=False):
+# ---- Basic Auth (тільки для адмінських роутів) ----
+def _check_auth(auth):
+    if not auth: return False
+    return auth.username == os.getenv("ADMIN_USER", "admin") and auth.password == os.getenv("ADMIN_PASS", "1234")
+
+@admin_api.before_request
+def _guard():
+    if not _check_auth(request.authorization):
+        return Response('Login Required', 401, {'WWW-Authenticate': 'Basic realm="Amulet Admin"'})
+
+def _parse_date(dstr, end=False):
     if not dstr: return None
     try:
         dt = datetime.strptime(dstr, "%Y-%m-%d")
@@ -15,14 +26,14 @@ def parse_date(dstr, end=False):
         return None
 
 # ---- LICENSES ----
-@admin_bp.get("/licenses")
+@admin_api.get("/licenses")
 def list_licenses():
     q = (request.args.get("q") or "").strip()
     min_credit = request.args.get("min_credit", type=int)
     max_credit = request.args.get("max_credit", type=int)
     active = request.args.get("active")
-    date_from = parse_date(request.args.get("date_from"))
-    date_to = parse_date(request.args.get("date_to"), end=True)
+    date_from = _parse_date(request.args.get("date_from"))
+    date_to = _parse_date(request.args.get("date_to"), end=True)
 
     qry = License.query
     if q:
@@ -35,26 +46,21 @@ def list_licenses():
     if date_to:   qry = qry.filter(License.created_at < date_to)
 
     rows = qry.order_by(License.id.desc()).all()
-    return jsonify([{
-        "id": x.id, "key": x.key, "mac_id": x.mac_id, "credit": x.credit,
-        "active": x.active,
-        "created_at": x.created_at.isoformat() if x.created_at else None,
-        "updated_at": x.updated_at.isoformat() if x.updated_at else None
-    } for x in rows])
+    return jsonify([x.as_dict() for x in rows])
 
-@admin_bp.post("/licenses")
+@admin_api.post("/licenses")
 def create_license():
     data = request.get_json(force=True)
     lic = License(
         key=(data.get("key") or "").strip(),
         mac_id=(data.get("mac_id") or "").strip() or None,
         credit=int(data.get("credit") or 0),
-        active=bool(data.get("active"))
+        active=bool(data.get("active", True))
     )
     db.session.add(lic); db.session.commit()
     return jsonify({"id": lic.id}), 201
 
-@admin_bp.put("/licenses/<int:lic_id>")
+@admin_api.put("/licenses/<int:lic_id>")
 def update_license(lic_id):
     lic = License.query.get_or_404(lic_id)
     data = request.get_json(force=True)
@@ -65,20 +71,20 @@ def update_license(lic_id):
     db.session.commit()
     return jsonify({"ok": True})
 
-@admin_bp.delete("/licenses/<int:lic_id>")
+@admin_api.delete("/licenses/<int:lic_id>")
 def delete_license(lic_id):
     lic = License.query.get_or_404(lic_id)
     db.session.delete(lic); db.session.commit()
     return jsonify({"ok": True})
 
-@admin_bp.post("/licenses/<int:lic_id>/toggle")
+@admin_api.post("/licenses/<int:lic_id>/toggle")
 def toggle_license(lic_id):
     lic = License.query.get_or_404(lic_id)
     lic.active = not lic.active
     db.session.commit()
     return jsonify({"active": lic.active})
 
-@admin_bp.post("/licenses/<int:lic_id>/credit")
+@admin_api.post("/licenses/<int:lic_id>/credit")
 def adjust_credit(lic_id):
     lic = License.query.get_or_404(lic_id)
     data = request.get_json(force=True)
@@ -87,21 +93,18 @@ def adjust_credit(lic_id):
     db.session.commit()
     db.session.add(ActivityLog(
         license_id=lic.id, action="adjust_credit",
-        char_count=abs(delta), details=f"delta={delta}"
+        char_count=abs(delta), delta=delta, details=f"delta={delta}"
     ))
     db.session.commit()
     return jsonify({"credit": lic.credit})
 
 # ---- API KEYS ----
-@admin_bp.get("/apikeys")
+@admin_api.get("/apikeys")
 def list_apikeys():
     rows = ApiKey.query.order_by(ApiKey.id.desc()).all()
-    return jsonify([{
-        "id": x.id, "api_key": x.api_key, "status": x.status,
-        "created_at": x.created_at.isoformat() if x.created_at else None
-    } for x in rows])
+    return jsonify([x.as_dict() for x in rows])
 
-@admin_bp.post("/apikeys")
+@admin_api.post("/apikeys")
 def create_apikey():
     data = request.get_json(force=True)
     ak = ApiKey(api_key=(data.get("api_key") or "").strip(),
@@ -109,7 +112,7 @@ def create_apikey():
     db.session.add(ak); db.session.commit()
     return jsonify({"id": ak.id}), 201
 
-@admin_bp.put("/apikeys/<int:ak_id>")
+@admin_api.put("/apikeys/<int:ak_id>")
 def update_apikey(ak_id):
     ak = ApiKey.query.get_or_404(ak_id)
     data = request.get_json(force=True)
@@ -118,32 +121,30 @@ def update_apikey(ak_id):
     db.session.commit()
     return jsonify({"ok": True})
 
-@admin_bp.delete("/apikeys/<int:ak_id>")
+@admin_api.delete("/apikeys/<int:ak_id>")
 def delete_apikey(ak_id):
     ak = ApiKey.query.get_or_404(ak_id)
     db.session.delete(ak); db.session.commit()
     return jsonify({"ok": True})
 
 # ---- VOICES ----
-@admin_bp.get("/voices")
+@admin_api.get("/voices")
 def list_voices():
     rows = Voice.query.order_by(Voice.id.desc()).all()
-    return jsonify([{
-        "id": x.id, "name": x.name, "voice_id": x.voice_id, "active": x.active
-    } for x in rows])
+    return jsonify([v.as_dict() for v in rows])
 
-@admin_bp.post("/voices")
+@admin_api.post("/voices")
 def create_voice():
     data = request.get_json(force=True)
     v = Voice(
         name=(data.get("name") or "").strip(),
         voice_id=(data.get("voice_id") or "").strip(),
-        active=bool(data.get("active"))
+        active=bool(data.get("active", True))
     )
     db.session.add(v); db.session.commit()
     return jsonify({"id": v.id}), 201
 
-@admin_bp.put("/voices/<int:v_id>")
+@admin_api.put("/voices/<int:v_id>")
 def update_voice(v_id):
     v = Voice.query.get_or_404(v_id)
     data = request.get_json(force=True)
@@ -153,13 +154,13 @@ def update_voice(v_id):
     db.session.commit()
     return jsonify({"ok": True})
 
-@admin_bp.delete("/voices/<int:v_id>")
+@admin_api.delete("/voices/<int:v_id>")
 def delete_voice(v_id):
     v = Voice.query.get_or_404(v_id)
     db.session.delete(v); db.session.commit()
     return jsonify({"ok": True})
 
-@admin_bp.post("/voices/upload")
+@admin_api.post("/voices/upload")
 def upload_voices():
     if 'file' not in request.files:
         return jsonify({"msg": "no file"}), 400
@@ -180,14 +181,14 @@ def upload_voices():
     return jsonify({"added": added})
 
 # ---- LOGS ----
-@admin_bp.get("/logs")
+@admin_api.get("/logs")
 def list_logs():
     q = (request.args.get("q") or "").strip()
     min_chars = request.args.get("min_chars", type=int)
     max_chars = request.args.get("max_chars", type=int)
     action = (request.args.get("action") or "").strip()
-    date_from = parse_date(request.args.get("date_from"))
-    date_to = parse_date(request.args.get("date_to"), end=True)
+    date_from = _parse_date(request.args.get("date_from"))
+    date_to = _parse_date(request.args.get("date_to"), end=True)
 
     qry = ActivityLog.query
     if q: qry = qry.filter(ActivityLog.details.ilike(f"%{q}%"))
@@ -198,28 +199,17 @@ def list_logs():
     if date_to: qry = qry.filter(ActivityLog.created_at < date_to)
 
     rows = qry.order_by(ActivityLog.id.desc()).all()
-    return jsonify([{
-        "id": x.id, "license_id": x.license_id, "action": x.action,
-        "char_count": x.char_count, "details": x.details,
-        "created_at": x.created_at.isoformat() if x.created_at else None
-    } for x in rows])
+    return jsonify([x.as_dict() for x in rows])
 
 # ---- CONFIG ----
-@admin_bp.get("/config")
+@admin_api.get("/config")
 def get_config():
     c = Config.query.first()
     if not c:
         c = Config(); db.session.add(c); db.session.commit()
-    return jsonify({
-        "latest_version": c.latest_version,
-        "force_update": c.force_update,
-        "maintenance": c.maintenance,
-        "maintenance_message": c.maintenance_message,
-        "update_description": c.update_description,
-        "update_links": c.update_links
-    })
+    return jsonify(c.as_dict())
 
-@admin_bp.put("/config")
+@admin_api.put("/config")
 def save_config():
     data = request.get_json(force=True)
     c = Config.query.first() or Config()
@@ -233,54 +223,22 @@ def save_config():
     return jsonify({"ok": True})
 
 # ---- BACKUPS ----
-@admin_bp.get("/backup")
+@admin_api.get("/backup")
 def full_backup():
     data = {
-        "licenses": [{
-            "id": x.id, "key": x.key, "mac_id": x.mac_id,
-            "credit": x.credit, "active": x.active,
-            "created_at": x.created_at.isoformat() if x.created_at else None,
-            "updated_at": x.updated_at.isoformat() if x.updated_at else None
-        } for x in License.query.all()],
-        "api_keys": [{
-            "id": x.id, "api_key": x.api_key, "status": x.status,
-            "created_at": x.created_at.isoformat() if x.created_at else None
-        } for x in ApiKey.query.all()],
-        "voices": [{
-            "id": x.id, "name": x.name, "voice_id": x.voice_id, "active": x.active
-        } for x in Voice.query.all()],
-        "config": (lambda c: {
-            "latest_version": c.latest_version,
-            "force_update": c.force_update,
-            "maintenance": c.maintenance,
-            "maintenance_message": c.maintenance_message,
-            "update_description": c.update_description,
-            "update_links": c.update_links
-        })(Config.query.first() or Config()),
-        "logs": [{
-            "id": x.id, "license_id": x.license_id, "action": x.action,
-            "char_count": x.char_count, "details": x.details,
-            "created_at": x.created_at.isoformat() if x.created_at else None
-        } for x in ActivityLog.query.all()],
+        "licenses": [x.as_dict() for x in License.query.all()],
+        "api_keys": [x.as_dict() for x in ApiKey.query.all()],
+        "voices":   [x.as_dict() for x in Voice.query.all()],
+        "config":   (Config.query.first().as_dict() if Config.query.first() else Config().as_dict()),
+        "logs":     [x.as_dict() for x in ActivityLog.query.all()],
     }
-    import json
     buf = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
-    return Response(
-        buf, mimetype="application/json",
-        headers={"Content-Disposition": 'attachment; filename="amulet_backup.json"'}
-    )
+    return Response(buf, mimetype="application/json",
+        headers={"Content-Disposition": 'attachment; filename="amulet_backup.json"'})
 
-@admin_bp.get("/backup/licenses")
+@admin_api.get("/backup/licenses")
 def backup_licenses():
-    data = [{
-        "id": x.id, "key": x.key, "mac_id": x.mac_id, "credit": x.credit,
-        "active": x.active,
-        "created_at": x.created_at.isoformat() if x.created_at else None,
-        "updated_at": x.updated_at.isoformat() if x.updated_at else None
-    } for x in License.query.all()]
-    import json
+    data = [x.as_dict() for x in License.query.all()]
     buf = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
-    return Response(
-        buf, mimetype="application/json",
-        headers={"Content-Disposition": 'attachment; filename="amulet_licenses_backup.json"'}
-    )
+    return Response(buf, mimetype="application/json",
+        headers={"Content-Disposition": 'attachment; filename="amulet_licenses_backup.json"'})
