@@ -134,33 +134,34 @@ async function applyDelta(){
     el("licDelta").value = "";
     el("licCredit").value = res.credit;
     await loadLicenses();
-  }catch(e){ toast("Δ error: "+e.message); }
+  }catch(e){ toast("Delta error: "+e.message); }
 }
 
 // ================= API Keys =================
-let currentKeyEditId = null;
+let currentAkEditId = null;
 
 async function loadApiKeys(){
   try{
-    const data = await jfetch(`/admin_api/apikeys`);
-    const tb = el("keysTbody");
+    const data = await jfetch("/admin_api/apikeys");
+    const tb = el("akTbody");
     tb.innerHTML = "";
     data.forEach(row=>{
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${row.id}</td>
         <td><code class="copyable" data-copy="${escapeHTML(row.api_key)}">${escapeHTML(row.api_key)}</code></td>
-        <td>${escapeHTML(row.status)}</td>
+        <td>${row.status}</td>
+        <td class="small">${row.created_at ? new Date(row.created_at).toLocaleString() : ""}</td>
         <td class="text-nowrap">
-          <button class="btn btn-sm btn-outline-primary me-1 edit-key" data-id="${row.id}">✏️</button>
-          <button class="btn btn-sm btn-outline-danger del-key" data-id="${row.id}">🗑</button>
+          <button class="btn btn-sm btn-outline-primary me-1 edit-ak" data-id="${row.id}">✏️</button>
+          <button class="btn btn-sm btn-outline-danger del-ak" data-id="${row.id}">🗑</button>
         </td>`;
       tb.appendChild(tr);
 
-      tr.querySelector('.edit-key').addEventListener('click', ()=>{
+      tr.querySelector('.edit-ak').addEventListener('click', ()=>{
         editApiKey(row.id, row.api_key, row.status);
       });
-      tr.querySelector('.del-key').addEventListener('click', ()=> deleteApiKey(row.id));
+      tr.querySelector('.del-ak').addEventListener('click', ()=> deleteApiKey(row.id));
     });
     tb.querySelectorAll('.copyable').forEach(n=>{
       n.addEventListener('click', ()=> copyToClipboard(n.dataset.copy));
@@ -168,40 +169,40 @@ async function loadApiKeys(){
   }catch(e){ toast("Load apikeys error: "+e.message); }
 }
 
-function resetKeyForm(){
-  currentKeyEditId = null;
-  el("keyFormTitle").textContent = "Додати API ключ";
-  el("keyId").value = "";
-  el("keyValue").value = "";
-  el("keyStatus").value = "active";
+function resetApiKeyForm(){
+  currentAkEditId = null;
+  el("akFormTitle").textContent = "Додати API Key";
+  el("akId").value = "";
+  el("akKey").value = "";
+  el("akStatus").value = "active";
 }
 
-function editApiKey(id,api_key,status){
-  currentKeyEditId = id;
-  el("keyFormTitle").textContent = `Редагувати API ключ #${id}`;
-  el("keyId").value = id;
-  el("keyValue").value = api_key;
-  el("keyStatus").value = status;
+function editApiKey(id, key, status){
+  currentAkEditId = id;
+  el("akFormTitle").textContent = `Редагувати #${id}`;
+  el("akId").value = id;
+  el("akKey").value = key;
+  el("akStatus").value = status;
 }
 
 async function submitApiKey(){
   const payload = {
-    api_key: el("keyValue").value.trim(),
-    status: el("keyStatus").value
+    api_key: el("akKey").value.trim(),
+    status: el("akStatus").value
   };
   try{
-    if (currentKeyEditId){
-      await jfetch(`/admin_api/apikeys/${currentKeyEditId}`, "PUT", payload);
+    if (currentAkEditId){
+      await jfetch(`/admin_api/apikeys/${currentAkEditId}`, "PUT", payload);
     } else {
       await jfetch(`/admin_api/apikeys`, "POST", payload);
     }
-    resetKeyForm();
+    resetApiKeyForm();
     await loadApiKeys();
   }catch(e){ toast("Save apikey error: "+e.message); }
 }
 
 async function deleteApiKey(id){
-  if (!confirm("Видалити API ключ?")) return;
+  if (!confirm("Видалити API key?")) return;
   try{
     await jfetch(`/admin_api/apikeys/${id}`, "DELETE");
     await loadApiKeys();
@@ -213,7 +214,7 @@ let currentVoiceEditId = null;
 
 async function loadVoices(){
   try{
-    const data = await jfetch(`/admin_api/voices`);
+    const data = await jfetch("/admin_api/voices");
     const tb = el("voicesTbody");
     tb.innerHTML = "";
     data.forEach(row=>{
@@ -221,7 +222,7 @@ async function loadVoices(){
       tr.innerHTML = `
         <td>${row.id}</td>
         <td>${escapeHTML(row.name)}</td>
-        <td><code class="copyable" data-copy="${escapeHTML(row.voice_id)}">${escapeHTML(row.voice_id)}</code></td>
+        <td>${escapeHTML(row.voice_id)}</td>
         <td>${row.active ? "Active" : "Inactive"}</td>
         <td class="text-nowrap">
           <button class="btn btn-sm btn-outline-primary me-1 edit-voice" data-id="${row.id}">✏️</button>
@@ -234,9 +235,6 @@ async function loadVoices(){
       });
       tr.querySelector('.del-voice').addEventListener('click', ()=> deleteVoice(row.id));
     });
-    tb.querySelectorAll('.copyable').forEach(n=>{
-      n.addEventListener('click', ()=> copyToClipboard(n.dataset.copy));
-    });
   }catch(e){ toast("Load voices error: "+e.message); }
 }
 
@@ -245,24 +243,23 @@ function resetVoiceForm(){
   el("voiceFormTitle").textContent = "Додати голос";
   el("voiceId").value = "";
   el("voiceName").value = "";
-  el("voiceValue").value = "";
+  el("voiceVid").value = "";
   el("voiceActive").checked = true;
-  el("voiceFile").value = "";
 }
 
-function editVoice(id,name,voice_id,active){
+function editVoice(id, name, vid, active){
   currentVoiceEditId = id;
-  el("voiceFormTitle").textContent = `Редагувати голос #${id}`;
+  el("voiceFormTitle").textContent = `Редагувати #${id}`;
   el("voiceId").value = id;
   el("voiceName").value = name;
-  el("voiceValue").value = voice_id;
+  el("voiceVid").value = vid;
   el("voiceActive").checked = !!active;
 }
 
 async function submitVoice(){
   const payload = {
     name: el("voiceName").value.trim(),
-    voice_id: el("voiceValue").value.trim(),
+    voice_id: el("voiceVid").value.trim(),
     active: el("voiceActive").checked
   };
   try{

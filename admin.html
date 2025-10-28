@@ -99,28 +99,28 @@
         <div class="col-lg-8">
           <div class="table-responsive">
             <table class="table table-sm table-striped align-middle">
-              <thead><tr><th>ID</th><th>API Key</th><th>Status</th><th>Дії</th></tr></thead>
-              <tbody id="keysTbody"></tbody>
+              <thead><tr>
+                <th>ID</th><th>API Key</th><th>Status</th><th>Created</th><th>Дії</th>
+              </tr></thead>
+              <tbody id="akTbody"></tbody>
             </table>
           </div>
         </div>
         <div class="col-lg-4">
           <div class="card shadow-sm">
             <div class="card-body">
-              <h6 class="mb-3" id="keyFormTitle">Додати API ключ</h6>
-              <input id="keyId" type="hidden">
-              <div class="mb-2"><label class="form-label">API Key</label><input id="keyValue" class="form-control"></div>
-              <div class="mb-2">
-                <label class="form-label">Status</label>
-                <select id="keyStatus" class="form-select">
-                  <option value="active">active</option>
-                  <option value="inactive">inactive</option>
-                  <option value="blocked">blocked</option>
+              <h6 class="mb-3" id="akFormTitle">Додати API Key</h6>
+              <input id="akId" type="hidden">
+              <div class="mb-2"><label class="form-label">API Key</label><input id="akKey" class="form-control"></div>
+              <div class="mb-2"><label class="form-label">Status</label>
+                <select id="akStatus" class="form-select">
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
                 </select>
               </div>
               <div class="d-flex gap-2">
                 <button class="btn btn-primary" onclick="submitApiKey()">💾 Зберегти</button>
-                <button class="btn btn-secondary" onclick="resetKeyForm()">↺ Очистити</button>
+                <button class="btn btn-secondary" onclick="resetApiKeyForm()">↺ Очистити</button>
               </div>
             </div>
           </div>
@@ -134,26 +134,31 @@
         <div class="col-lg-8">
           <div class="table-responsive">
             <table class="table table-sm table-striped align-middle">
-              <thead><tr><th>ID</th><th>Name</th><th>Voice ID</th><th>Active</th><th>Дії</th></tr></thead>
+              <thead><tr>
+                <th>ID</th><th>Name</th><th>Voice ID</th><th>Active</th><th>Дії</th>
+              </tr></thead>
               <tbody id="voicesTbody"></tbody>
             </table>
           </div>
         </div>
         <div class="col-lg-4">
-          <div class="card shadow-sm">
+          <div class="card shadow-sm mb-3">
             <div class="card-body">
               <h6 class="mb-3" id="voiceFormTitle">Додати голос</h6>
               <input id="voiceId" type="hidden">
               <div class="mb-2"><label class="form-label">Name</label><input id="voiceName" class="form-control"></div>
-              <div class="mb-2"><label class="form-label">Voice ID</label><input id="voiceValue" class="form-control"></div>
+              <div class="mb-2"><label class="form-label">Voice ID</label><input id="voiceVid" class="form-control"></div>
               <div class="form-check mb-2"><input id="voiceActive" class="form-check-input" type="checkbox" checked><label class="form-check-label">Active</label></div>
-              <div class="d-flex gap-2 mb-3">
+              <div class="d-flex gap-2">
                 <button class="btn btn-primary" onclick="submitVoice()">💾 Зберегти</button>
                 <button class="btn btn-secondary" onclick="resetVoiceForm()">↺ Очистити</button>
               </div>
-              <hr>
+            </div>
+          </div>
+          <div class="card shadow-sm">
+            <div class="card-body">
+              <h6 class="mb-3">Upload голосів з TXT (формат: name:voice_id)</h6>
               <div class="mb-2">
-                <label class="form-label">Upload Voices (TXT: name:voice_id)</label>
                 <input id="voiceFile" type="file" class="form-control" accept=".txt">
               </div>
               <button class="btn btn-outline-primary" onclick="uploadVoices()">📤 Upload</button>
