@@ -1,64 +1,83 @@
-# app.py
 import os
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask import Flask, request, jsonify
 from flask_cors import CORS
-from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from werkzeug.middleware.proxy_fix import ProxyFix
 
-app = Flask(__name__, static_folder='.')
-CORS(app)
+from models import db, License, ApiKey, Voice, Config, ActivityLog
+from admin_api import admin_bp
+from api import api_bp
 
-# --- БАЗА ДАНИХ ---
-if os.getenv('DATABASE_URL'):
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+app = Flask(__name__, static_folder='static', static_url_path='/static')
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret')
+
+# Normalize Railway postgres scheme if needed
+db_url = os.getenv('DATABASE_URL')
+if db_url and db_url.startswith('postgres://'):
+    db_url = db_url.replace('postgres://', 'postgresql://', 1)
+
+if db_url:
+    app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 else:
     os.makedirs('instance', exist_ok=True)
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///instance/db.sqlite'
 
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-db = SQLAlchemy(app)
+# CORS (keep open for /api, restrict admin if needed)
+CORS(app, resources={
+    r"/api": {"origins": "*"},
+    r"/admin_api/*": {"origins": "*"},
+})
 
-# --- МОДЕЛІ ---
-class License(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    key = db.Column(db.String(64), unique=True, nullable=False)
-    user_id = db.Column(db.String(64))
-    expires_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    is_active = db.Column(db.Boolean, default=True)
+# Init DB
+db.init_app(app)
 
-class Config(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    latest_version = db.Column(db.String(20), default="1.0.0")
-    force_update = db.Column(db.Boolean, default=False)
-    maintenance = db.Column(db.Boolean, default=False)
+# Basic Auth for admin
+ADMIN_USER = os.getenv('ADMIN_USER')
+ADMIN_PASS = os.getenv('ADMIN_PASS')
 
-# --- ІНІЦІАЛІЗАЦІЯ ---
+def require_admin():
+    if not ADMIN_USER or not ADMIN_PASS:
+        return  # auth disabled
+    auth = request.authorization
+    if not auth or auth.username != ADMIN_USER or auth.password != ADMIN_PASS:
+        return jsonify({"error": "auth_required"}), 401, {
+            "WWW-Authenticate": 'Basic realm="Amulet Admin"'
+        }
+
+@app.before_request
+def protect_admin():
+    path = request.path or ""
+    # public: static, health, api (root захищається у index())
+    if path.startswith("/static") or path == "/healthz" or path == "/api":
+        return
+    if path.startswith("/admin_api"):
+        r = require_admin()
+        if r: return r
+
+@app.route("/")
+def index():
+    r = require_admin()
+    if r: return r
+    return app.send_static_file("admin.html")
+
+@app.route("/healthz")
+def healthz():
+    return "ok", 200
+
+# Blueprints
+app.register_blueprint(admin_bp, url_prefix="/admin_api")
+app.register_blueprint(api_bp)  # /api
+
+# Bootstrap DB on first run
 with app.app_context():
     db.create_all()
     if not Config.query.first():
         db.session.add(Config())
         db.session.commit()
 
-# --- МАРШРУТИ ---
-@app.route('/')
-def index():
-    return send_file('admin.html')
-
-@app.route('/<path:path>')
-def static_files(path):
-    return send_from_directory('.', path)
-
-@app.route('/api/config', methods=['GET'])
-def get_config():
-    config = Config.query.first()
-    return jsonify({
-        'latest_version': config.latest_version,
-        'force_update': config.force_update,
-        'maintenance': config.maintenance
-    })
-
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port, debug=False)

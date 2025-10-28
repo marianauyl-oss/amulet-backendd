@@ -7,7 +7,7 @@ async function jfetch(url, method="GET", data=null) {
   return await r.json();
 }
 function el(id){ return document.getElementById(id); }
-function toast(msg){ alert(msg); } // Changed to alert for better visibility
+function toast(msg){ alert(msg); }
 
 function copyToClipboard(text) {
   navigator.clipboard.writeText(text).then(
@@ -15,6 +15,10 @@ function copyToClipboard(text) {
     (err) => toast("Помилка копіювання: " + err)
   );
 }
+function escapeHTML(s){ return (s ?? '').toString()
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+  .replace(/'/g,'&#39;'); }
 
 // ================= Licenses =================
 let currentLicEditId = null;
@@ -24,7 +28,7 @@ async function loadLicenses(){
     const q = encodeURIComponent(el("licSearch").value || "");
     const minCredit = el("licMinCredit").value || "";
     const maxCredit = el("licMaxCredit").value || "";
-    const active = el("licActive").value || "";
+    const active = el("licActiveFilter").value || "";
     const dateFrom = el("licDateFrom").value || "";
     const dateTo = el("licDateTo").value || "";
     let url = `/admin_api/licenses?q=${q}`;
@@ -41,18 +45,27 @@ async function loadLicenses(){
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${row.id}</td>
-        <td><code class="copyable" onclick="copyToClipboard('${row.key.replace(/'/g, "\\'")}')">${row.key}</code></td>
-        <td>${row.mac_id || ""}</td>
+        <td><code class="copyable" data-copy="${escapeHTML(row.key)}">${escapeHTML(row.key)}</code></td>
+        <td>${escapeHTML(row.mac_id || "")}</td>
         <td><strong>${row.credit}</strong></td>
         <td>${row.active ? "Active" : "Inactive"}</td>
         <td class="small">${row.created_at ? new Date(row.created_at).toLocaleString() : ""}</td>
         <td class="small">${row.updated_at ? new Date(row.updated_at).toLocaleString() : ""}</td>
         <td class="text-nowrap">
-          <button class="btn btn-sm btn-outline-primary me-1" onclick='editLicense(${row.id},"${row.key.replace(/"/g,'&quot;')}","${(row.mac_id||"").replace(/"/g,'&quot;')}",${row.credit},${row.active})'>✏️</button>
-          <button class="btn btn-sm btn-outline-warning me-1" onclick="toggleLicense(${row.id})">🔁</button>
-          <button class="btn btn-sm btn-outline-danger" onclick="deleteLicense(${row.id})">🗑</button>
+          <button class="btn btn-sm btn-outline-primary me-1 edit-lic" data-id="${row.id}">✏️</button>
+          <button class="btn btn-sm btn-outline-warning me-1 toggle-lic" data-id="${row.id}">🔁</button>
+          <button class="btn btn-sm btn-outline-danger del-lic" data-id="${row.id}">🗑</button>
         </td>`;
       tb.appendChild(tr);
+
+      tr.querySelector('.edit-lic').addEventListener('click', ()=>{
+        editLicense(row.id, row.key, row.mac_id || "", row.credit, row.active);
+      });
+      tr.querySelector('.toggle-lic').addEventListener('click', ()=> toggleLicense(row.id));
+      tr.querySelector('.del-lic').addEventListener('click', ()=> deleteLicense(row.id));
+    });
+    tb.querySelectorAll('.copyable').forEach(n=>{
+      n.addEventListener('click', ()=> copyToClipboard(n.dataset.copy));
     });
   }catch(e){ toast("Load licenses error: "+e.message); }
 }
@@ -136,13 +149,21 @@ async function loadApiKeys(){
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${row.id}</td>
-        <td><code class="copyable" onclick="copyToClipboard('${row.api_key.replace(/'/g, "\\'")}')">${row.api_key}</code></td>
-        <td>${row.status}</td>
+        <td><code class="copyable" data-copy="${escapeHTML(row.api_key)}">${escapeHTML(row.api_key)}</code></td>
+        <td>${escapeHTML(row.status)}</td>
         <td class="text-nowrap">
-          <button class="btn btn-sm btn-outline-primary me-1" onclick='editApiKey(${row.id},"${row.api_key.replace(/"/g,'&quot;')}","${row.status}")'>✏️</button>
-          <button class="btn btn-sm btn-outline-danger" onclick="deleteApiKey(${row.id})">🗑</button>
+          <button class="btn btn-sm btn-outline-primary me-1 edit-key" data-id="${row.id}">✏️</button>
+          <button class="btn btn-sm btn-outline-danger del-key" data-id="${row.id}">🗑</button>
         </td>`;
       tb.appendChild(tr);
+
+      tr.querySelector('.edit-key').addEventListener('click', ()=>{
+        editApiKey(row.id, row.api_key, row.status);
+      });
+      tr.querySelector('.del-key').addEventListener('click', ()=> deleteApiKey(row.id));
+    });
+    tb.querySelectorAll('.copyable').forEach(n=>{
+      n.addEventListener('click', ()=> copyToClipboard(n.dataset.copy));
     });
   }catch(e){ toast("Load apikeys error: "+e.message); }
 }
@@ -199,14 +220,22 @@ async function loadVoices(){
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${row.id}</td>
-        <td>${row.name}</td>
-        <td><code class="copyable" onclick="copyToClipboard('${row.voice_id.replace(/'/g, "\\'")}')">${row.voice_id}</code></td>
+        <td>${escapeHTML(row.name)}</td>
+        <td><code class="copyable" data-copy="${escapeHTML(row.voice_id)}">${escapeHTML(row.voice_id)}</code></td>
         <td>${row.active ? "Active" : "Inactive"}</td>
         <td class="text-nowrap">
-          <button class="btn btn-sm btn-outline-primary me-1" onclick='editVoice(${row.id},"${row.name.replace(/"/g,'&quot;')}","${row.voice_id.replace(/"/g,'&quot;')}",${row.active})'>✏️</button>
-          <button class="btn btn-sm btn-outline-danger" onclick="deleteVoice(${row.id})">🗑</button>
+          <button class="btn btn-sm btn-outline-primary me-1 edit-voice" data-id="${row.id}">✏️</button>
+          <button class="btn btn-sm btn-outline-danger del-voice" data-id="${row.id}">🗑</button>
         </td>`;
       tb.appendChild(tr);
+
+      tr.querySelector('.edit-voice').addEventListener('click', ()=>{
+        editVoice(row.id, row.name, row.voice_id, row.active);
+      });
+      tr.querySelector('.del-voice').addEventListener('click', ()=> deleteVoice(row.id));
+    });
+    tb.querySelectorAll('.copyable').forEach(n=>{
+      n.addEventListener('click', ()=> copyToClipboard(n.dataset.copy));
     });
   }catch(e){ toast("Load voices error: "+e.message); }
 }
@@ -256,10 +285,7 @@ async function uploadVoices(){
   const formData = new FormData();
   formData.append("file", fileInput.files[0]);
   try{
-    const res = await fetch("/admin_api/voices/upload", {
-      method: "POST",
-      body: formData
-    });
+    const res = await fetch("/admin_api/voices/upload", { method: "POST", body: formData });
     const data = await res.json();
     if (!res.ok) throw new Error(data.msg || "Upload error");
     toast(`Успішно додано ${data.added} голосів`);
@@ -301,10 +327,10 @@ async function loadLogs(){
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${row.id}</td>
-        <td>${row.license_id}</td>
-        <td>${row.action}</td>
-        <td>${row.char_count}</td>
-        <td>${row.details}</td>
+        <td>${row.license_id ?? ""}</td>
+        <td>${escapeHTML(row.action)}</td>
+        <td>${row.char_count ?? ""}</td>
+        <td>${escapeHTML(row.details ?? "")}</td>
         <td class="small">${row.created_at ? new Date(row.created_at).toLocaleString() : ""}</td>`;
       tb.appendChild(tr);
     });
@@ -346,7 +372,9 @@ async function downloadBackup(){
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = res.headers.get("Content-Disposition")?.split("filename=")[1] || "amulet_backup.json";
+    const cd = res.headers.get("Content-Disposition") || "";
+    const fn = (cd.split("filename=")[1] || "amulet_backup.json").replace(/"/g,"");
+    a.download = fn;
     a.click();
     window.URL.revokeObjectURL(url);
   }catch(e){
@@ -362,7 +390,9 @@ async function downloadLicensesBackup(){
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = res.headers.get("Content-Disposition")?.split("filename=")[1] || "amulet_licenses_backup.json";
+    const cd = res.headers.get("Content-Disposition") || "";
+    const fn = (cd.split("filename=")[1] || "amulet_licenses_backup.json").replace(/"/g,"");
+    a.download = fn;
     a.click();
     window.URL.revokeObjectURL(url);
   }catch(e){
