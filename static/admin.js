@@ -1,290 +1,383 @@
-// === Utility helpers ===
-const API = {
-  lic:  (p='') => `/admin/api/licenses${p}`,
-  ak:   (p='') => `/admin/api/apikeys${p}`,
-  v:    (p='') => `/admin/api/voices${p}`,
-  cfg:  () => `/admin/api/config`,
-  logs: () => `/admin/api/logs`,
-  upv:  () => `/admin/api/voices/upload`,
-  bkp:  () => `/admin/api/backup`,
-  bkpLic: () => `/admin/api/backup/licenses`,
-  console: () => `/api`
-};
+// ---- helpers ----
+async function jfetch(url, method="GET", data=null) {
+  const opt = { method, headers: { "Content-Type":"application/json" } };
+  if (data) opt.body = JSON.stringify(data);
+  const r = await fetch(url, opt);
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return await r.json();
+}
+function el(id){ return document.getElementById(id); }
+function toast(msg){ alert(msg); } // Changed to alert for better visibility
 
-const J = (sel) => document.querySelector(sel);
-const JAll = (sel) => Array.from(document.querySelectorAll(sel));
-
-async function jget(url) {
-  const r = await fetch(url, { credentials: 'include' });
-  if (r.status === 401) throw new Error('401 Unauthorized');
-  return r.json();
-}
-async function jpost(url, body) {
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(body || {})
-  });
-  if (r.status === 401) throw new Error('401 Unauthorized');
-  return r.json();
-}
-async function jput(url, body) {
-  const r = await fetch(url, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(body || {})
-  });
-  if (r.status === 401) throw new Error('401 Unauthorized');
-  return r.json();
-}
-async function jdel(url) {
-  const r = await fetch(url, { method: 'DELETE', credentials: 'include' });
-  if (r.status === 401) throw new Error('401 Unauthorized');
-  return r.json();
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text).then(
+    () => toast("Скопійовано: " + text),
+    (err) => toast("Помилка копіювання: " + err)
+  );
 }
 
-// === LICENSES ===
-async function loadLicenses() {
-  const q = new URLSearchParams();
-  const s = J('#licSearch')?.value?.trim();
-  const minc = J('#licMinCredit')?.value;
-  const maxc = J('#licMaxCredit')?.value;
-  const act = J('#licActiveFilter')?.value;
-  const df = J('#licDateFrom')?.value;
-  const dt = J('#licDateTo')?.value;
-  if (s) q.set('q', s);
-  if (minc) q.set('min_credit', minc);
-  if (maxc) q.set('max_credit', maxc);
-  if (act) q.set('active', act);
-  if (df) q.set('date_from', df);
-  if (dt) q.set('date_to', dt);
+// ================= Licenses =================
+let currentLicEditId = null;
 
-  const rows = await jget(API.lic(q.toString() ? `?${q.toString()}` : ''));
-  const tb = J('#licTbody'); tb.innerHTML = '';
-  for (const x of rows) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${x.id}</td>
-      <td class="copyable" title="copy">${x.key}</td>
-      <td>${x.mac_id ?? ''}</td>
-      <td>${x.credit}</td>
-      <td>${x.active ? '✅' : '⛔'}</td>
-      <td>${x.created_at ?? ''}</td>
-      <td>${x.updated_at ?? ''}</td>
-      <td class="d-flex gap-1">
-        <button class="btn btn-sm btn-outline-primary">Edit</button>
-        <button class="btn btn-sm btn-outline-danger">Del</button>
-        <button class="btn btn-sm btn-outline-success">Toggle</button>
-      </td>`;
-    tr.querySelector('.btn-outline-primary').onclick = () => fillLicForm(x);
-    tr.querySelector('.btn-outline-danger').onclick = async () => { await jdel(API.lic(`/${x.id}`)); loadLicenses(); };
-    tr.querySelector('.btn-outline-success').onclick = async () => { await jpost(API.lic(`/${x.id}/toggle`), {}); loadLicenses(); };
-    tr.querySelector('.copyable').onclick = () => navigator.clipboard.writeText(x.key);
-    tb.appendChild(tr);
-  }
+async function loadLicenses(){
+  try{
+    const q = encodeURIComponent(el("licSearch").value || "");
+    const data = await jfetch(`/admin_api/licenses?q=${q}`);
+    const tb = el("licTbody");
+    tb.innerHTML = "";
+    data.forEach(row=>{
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${row.id}</td>
+        <td><code class="copyable" onclick="copyToClipboard('${row.key.replace(/'/g, "\\'")}')">${row.key}</code></td>
+        <td>${row.mac_id || ""}</td>
+        <td><strong>${row.credit}</strong></td>
+        <td>${row.active ? "Active" : "Inactive"}</td>
+        <td class="small">${row.created_at ? new Date(row.created_at).toLocaleString() : ""}</td>
+        <td class="small">${row.updated_at ? new Date(row.updated_at).toLocaleString() : ""}</td>
+        <td class="text-nowrap">
+          <button class="btn btn-sm btn-outline-primary me-1" onclick='editLicense(${row.id},"${row.key.replace(/"/g,'&quot;')}","${(row.mac_id||"").replace(/"/g,'&quot;')}",${row.credit},${row.active})'>✏️</button>
+          <button class="btn btn-sm btn-outline-warning me-1" onclick="toggleLicense(${row.id})">🔁</button>
+          <button class="btn btn-sm btn-outline-danger" onclick="deleteLicense(${row.id})">🗑</button>
+        </td>`;
+      tb.appendChild(tr);
+    });
+  }catch(e){ toast("Load licenses error: "+e.message); }
 }
-function resetLicenseForm() {
-  J('#licId').value = '';
-  J('#licFormTitle').innerText = 'Додати ліцензію';
-  J('#licKey').value = '';
-  J('#licMac').value = '';
-  J('#licCredit').value = 0;
-  J('#licActive').checked = true;
+
+function resetLicenseForm(){
+  currentLicEditId = null;
+  el("licFormTitle").textContent = "Додати ліцензію";
+  el("licId").value = "";
+  el("licKey").value = "";
+  el("licMac").value = "";
+  el("licCredit").value = "0";
+  el("licActive").checked = true;
+  el("licDelta").value = "";
 }
-function fillLicForm(x) {
-  J('#licId').value = x.id;
-  J('#licFormTitle').innerText = `Редагувати #${x.id}`;
-  J('#licKey').value = x.key;
-  J('#licMac').value = x.mac_id || '';
-  J('#licCredit').value = x.credit || 0;
-  J('#licActive').checked = !!x.active;
+
+function editLicense(id,key,mac,credit,active){
+  currentLicEditId = id;
+  el("licFormTitle").textContent = `Редагувати #${id}`;
+  el("licId").value = id;
+  el("licKey").value = key;
+  el("licMac").value = mac || "";
+  el("licCredit").value = credit;
+  el("licActive").checked = !!active;
 }
-async function submitLicense() {
-  const id = J('#licId').value;
+
+async function submitLicense(){
   const payload = {
-    key: J('#licKey').value.trim(),
-    mac_id: J('#licMac').value.trim() || null,
-    credit: parseInt(J('#licCredit').value || '0', 10),
-    active: J('#licActive').checked
+    key: el("licKey").value.trim(),
+    mac_id: el("licMac").value.trim(),
+    credit: Number(el("licCredit").value||0),
+    active: el("licActive").checked
   };
-  if (id) await jput(API.lic(`/${id}`), payload);
-  else    await jpost(API.lic(), payload);
-  resetLicenseForm(); loadLicenses();
-}
-async function applyDelta() {
-  const id = J('#licId').value;
-  if (!id) return alert('Спочатку вибери ліцензію (Edit).');
-  const delta = parseInt(J('#licDelta').value || '0', 10);
-  await jpost(API.lic(`/${id}/credit`), { delta });
-  J('#licDelta').value = '';
-  loadLicenses();
-}
-
-// === API KEYS ===
-async function loadApiKeys() {
-  const rows = await jget(API.ak());
-  const tb = J('#akTbody'); tb.innerHTML = '';
-  for (const x of rows) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${x.id}</td>
-      <td class="copyable" title="copy">${x.api_key}</td>
-      <td>${x.status}</td>
-      <td>${x.created_at ?? ''}</td>
-      <td class="d-flex gap-1">
-        <button class="btn btn-sm btn-outline-primary">Edit</button>
-        <button class="btn btn-sm btn-outline-danger">Del</button>
-      </td>`;
-    tr.querySelector('.btn-outline-primary').onclick = () => {
-      J('#akId').value = x.id; J('#akFormTitle').innerText = `Редагувати #${x.id}`;
-      J('#akKey').value = x.api_key; J('#akStatus').value = x.status;
-    };
-    tr.querySelector('.btn-outline-danger').onclick = async () => { await jdel(API.ak(`/${x.id}`)); loadApiKeys(); };
-    tr.querySelector('.copyable').onclick = () => navigator.clipboard.writeText(x.api_key);
-    tb.appendChild(tr);
-  }
-}
-function resetApiKeyForm() {
-  J('#akId').value = ''; J('#akFormTitle').innerText = 'Додати API Key';
-  J('#akKey').value = ''; J('#akStatus').value = 'active';
-}
-async function submitApiKey() {
-  const id = J('#akId').value;
-  const body = { api_key: J('#akKey').value.trim(), status: J('#akStatus').value };
-  if (id) await jput(API.ak(`/${id}`), body);
-  else    await jpost(API.ak(), body);
-  resetApiKeyForm(); loadApiKeys();
-}
-
-// === VOICES ===
-async function loadVoices() {
-  const rows = await jget(API.v());
-  const tb = J('#voicesTbody'); tb.innerHTML = '';
-  for (const x of rows) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${x.id}</td><td>${x.name}</td><td class="copyable">${x.voice_id}</td>
-      <td>${x.active ? '✅' : '⛔'}</td>
-      <td class="d-flex gap-1">
-        <button class="btn btn-sm btn-outline-primary">Edit</button>
-        <button class="btn btn-sm btn-outline-danger">Del</button>
-      </td>`;
-    tr.querySelector('.btn-outline-primary').onclick = () => {
-      J('#voiceId').value = x.id; J('#voiceFormTitle').innerText = `Редагувати #${x.id}`;
-      J('#voiceName').value = x.name; J('#voiceVid').value = x.voice_id; J('#voiceActive').checked = !!x.active;
-    };
-    tr.querySelector('.btn-outline-danger').onclick = async () => { await jdel(API.v(`/${x.id}`)); loadVoices(); };
-    tr.querySelector('.copyable').onclick = () => navigator.clipboard.writeText(x.voice_id);
-    tb.appendChild(tr);
-  }
-}
-function resetVoiceForm() {
-  J('#voiceId').value=''; J('#voiceFormTitle').innerText='Додати голос';
-  J('#voiceName').value=''; J('#voiceVid').value=''; J('#voiceActive').checked=true;
-}
-async function submitVoice() {
-  const id = J('#voiceId').value;
-  const body = { name: J('#voiceName').value.trim(), voice_id: J('#voiceVid').value.trim(), active: J('#voiceActive').checked };
-  if (id) await jput(API.v(`/${id}`), body);
-  else    await jpost(API.v(), body);
-  resetVoiceForm(); loadVoices();
-}
-async function uploadVoices() {
-  const f = J('#voiceFile').files?.[0];
-  if (!f) return alert('Оберіть .txt файл');
-  const fd = new FormData(); fd.append('file', f);
-  const r = await fetch(API.upv(), { method:'POST', body: fd, credentials:'include' });
-  if (r.status === 401) return alert('401 Unauthorized');
-  const j = await r.json(); alert(`Додано: ${j.added || 0}`);
-  loadVoices();
-}
-
-// === LOGS ===
-async function loadLogs() {
-  const q = new URLSearchParams();
-  const s = J('#logSearch')?.value?.trim();
-  const minc = J('#logMinChars')?.value;
-  const maxc = J('#logMaxChars')?.value;
-  const act = J('#logAction')?.value;
-  const df = J('#logDateFrom')?.value;
-  const dt = J('#logDateTo')?.value;
-  if (s) q.set('q', s);
-  if (minc) q.set('min_chars', minc);
-  if (maxc) q.set('max_chars', maxc);
-  if (act) q.set('action', act);
-  if (df) q.set('date_from', df);
-  if (dt) q.set('date_to', dt);
-
-  const rows = await jget(API.logs() + (q.toString() ? `?${q.toString()}` : ''));
-  const tb = J('#logsTbody'); tb.innerHTML = '';
-  for (const x of rows) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${x.id}</td>
-      <td>${x.license_id ?? ''}</td>
-      <td>${x.action}</td>
-      <td>${x.char_count ?? 0}</td>
-      <td>${x.details ?? ''}</td>
-      <td>${x.created_at ?? ''}</td>`;
-    tb.appendChild(tr);
-  }
-}
-
-// === CONFIG ===
-async function loadConfig() {
-  const cfg = await jget(API.cfg());
-  J('#cfgLatest').value = cfg.latest_version || '';
-  J('#cfgForce').checked = !!cfg.force_update;
-  J('#cfgMaint').checked = !!cfg.maintenance;
-  J('#cfgMaintMsg').value = cfg.maintenance_message || '';
-  J('#cfgDesc').value = cfg.update_description || '';
-  J('#cfgLinks').value = cfg.update_links || '';
-}
-async function saveConfig() {
-  await jput(API.cfg(), {
-    latest_version: J('#cfgLatest').value.trim(),
-    force_update: J('#cfgForce').checked,
-    maintenance: J('#cfgMaint').checked,
-    maintenance_message: J('#cfgMaintMsg').value,
-    update_description: J('#cfgDesc').value,
-    update_links: J('#cfgLinks').value
-  });
-  alert('✅ Конфігурацію збережено');
-}
-function downloadBackup() {
-  window.location.href = API.bkp();
-}
-function downloadLicensesBackup() {
-  window.location.href = API.bkpLic();
-}
-
-// === CONSOLE (/api) ===
-async function runConsole() {
-  let payload = {};
-  try { payload = JSON.parse(J('#apiPayload').value || '{}'); }
-  catch { return alert('Невірний JSON'); }
-  const r = await jpost(API.console(), payload);
-  J('#apiResult').textContent = JSON.stringify(r, null, 2);
-}
-function formatJson() {
-  try {
-    const obj = JSON.parse(J('#apiPayload').value || '{}');
-    J('#apiPayload').value = JSON.stringify(obj, null, 2);
-  } catch {}
-}
-
-// === INIT ===
-document.addEventListener('DOMContentLoaded', async () => {
-  try {
-    await Promise.all([loadLicenses(), loadApiKeys(), loadVoices(), loadLogs(), loadConfig()]);
-  } catch (e) {
-    if (String(e).includes('401')) {
-      alert('❌ Неавторизовано. Перезавантаж сторінку — браузер попросить логін/пароль (ADMIN_USER / ADMIN_PASS).');
+  try{
+    if (currentLicEditId){
+      await jfetch(`/admin_api/licenses/${currentLicEditId}`, "PUT", payload);
     } else {
-      console.error(e);
-      alert('Помилка при завантаженні даних. Перевір консоль браузера.');
+      await jfetch(`/admin_api/licenses`, "POST", payload);
     }
+    resetLicenseForm();
+    await loadLicenses();
+  }catch(e){ toast("Save license error: "+e.message); }
+}
+
+async function deleteLicense(id){
+  if (!confirm("Видалити ліцензію?")) return;
+  try{
+    await jfetch(`/admin_api/licenses/${id}`, "DELETE");
+    await loadLicenses();
+  }catch(e){ toast("Delete error: "+e.message); }
+}
+
+async function toggleLicense(id){
+  try{
+    await jfetch(`/admin_api/licenses/${id}/toggle`, "POST", {});
+    await loadLicenses();
+  }catch(e){ toast("Toggle error: "+e.message); }
+}
+
+async function applyDelta(){
+  const id = Number(el("licId").value || 0);
+  if (!id){ toast("Спочатку вибери ліцензію (кнопка ✏️)"); return; }
+  const delta = Number(el("licDelta").value||0);
+  try{
+    const res = await jfetch(`/admin_api/licenses/${id}/credit`, "POST", { delta });
+    toast("New credit: "+res.credit);
+    el("licDelta").value = "";
+    el("licCredit").value = res.credit;
+    await loadLicenses();
+  }catch(e){ toast("Δ error: "+e.message); }
+}
+
+// ================= API Keys =================
+let currentKeyEditId = null;
+
+async function loadApiKeys(){
+  try{
+    const data = await jfetch(`/admin_api/apikeys`);
+    const tb = el("keysTbody");
+    tb.innerHTML = "";
+    data.forEach(row=>{
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${row.id}</td>
+        <td><code class="copyable" onclick="copyToClipboard('${row.api_key.replace(/'/g, "\\'")}')">${row.api_key}</code></td>
+        <td>${row.status}</td>
+        <td class="text-nowrap">
+          <button class="btn btn-sm btn-outline-primary me-1" onclick='editApiKey(${row.id},"${row.api_key.replace(/"/g,'&quot;')}","${row.status}")'>✏️</button>
+          <button class="btn btn-sm btn-outline-danger" onclick="deleteApiKey(${row.id})">🗑</button>
+        </td>`;
+      tb.appendChild(tr);
+    });
+  }catch(e){ toast("Load apikeys error: "+e.message); }
+}
+
+function resetKeyForm(){
+  currentKeyEditId = null;
+  el("keyFormTitle").textContent = "Додати API ключ";
+  el("keyId").value = "";
+  el("keyValue").value = "";
+  el("keyStatus").value = "active";
+}
+
+function editApiKey(id,api_key,status){
+  currentKeyEditId = id;
+  el("keyFormTitle").textContent = `Редагувати API ключ #${id}`;
+  el("keyId").value = id;
+  el("keyValue").value = api_key;
+  el("keyStatus").value = status;
+}
+
+async function submitApiKey(){
+  const payload = {
+    api_key: el("keyValue").value.trim(),
+    status: el("keyStatus").value
+  };
+  try{
+    if (currentKeyEditId){
+      await jfetch(`/admin_api/apikeys/${currentKeyEditId}`, "PUT", payload);
+    } else {
+      await jfetch(`/admin_api/apikeys`, "POST", payload);
+    }
+    resetKeyForm();
+    await loadApiKeys();
+  }catch(e){ toast("Save apikey error: "+e.message); }
+}
+
+async function deleteApiKey(id){
+  if (!confirm("Видалити API ключ?")) return;
+  try{
+    await jfetch(`/admin_api/apikeys/${id}`, "DELETE");
+    await loadApiKeys();
+  }catch(e){ toast("Delete key error: "+e.message); }
+}
+
+// ================= Voices =================
+let currentVoiceEditId = null;
+
+async function loadVoices(){
+  try{
+    const data = await jfetch(`/admin_api/voices`);
+    const tb = el("voicesTbody");
+    tb.innerHTML = "";
+    data.forEach(row=>{
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${row.id}</td>
+        <td>${row.name}</td>
+        <td><code>${row.voice_id}</code></td>
+        <td>${row.active ? "Active" : "Inactive"}</td>
+        <td class="text-nowrap">
+          <button class="btn btn-sm btn-outline-primary me-1" onclick='editVoice(${row.id},"${row.name.replace(/"/g,'&quot;')}","${row.voice_id.replace(/"/g,'&quot;')}",${row.active})'>✏️</button>
+          <button class="btn btn-sm btn-outline-danger" onclick="deleteVoice(${row.id})">🗑</button>
+        </td>`;
+      tb.appendChild(tr);
+    });
+  }catch(e){ toast("Load voices error: "+e.message); }
+}
+
+function resetVoiceForm(){
+  currentVoiceEditId = null;
+  el("voiceFormTitle").textContent = "Додати голос";
+  el("voiceId").value = "";
+  el("voiceName").value = "";
+  el("voiceValue").value = "";
+  el("voiceActive").checked = true;
+  el("voiceFile").value = "";
+}
+
+function editVoice(id,name,voice_id,active){
+  currentVoiceEditId = id;
+  el("voiceFormTitle").textContent = `Редагувати голос #${id}`;
+  el("voiceId").value = id;
+  el("voiceName").value = name;
+  el("voiceValue").value = voice_id;
+  el("voiceActive").checked = !!active;
+}
+
+async function submitVoice(){
+  const payload = {
+    name: el("voiceName").value.trim(),
+    voice_id: el("voiceValue").value.trim(),
+    active: el("voiceActive").checked
+  };
+  try{
+    if (currentVoiceEditId){
+      await jfetch(`/admin_api/voices/${currentVoiceEditId}`, "PUT", payload);
+    } else {
+      await jfetch(`/admin_api/voices`, "POST", payload);
+    }
+    resetVoiceForm();
+    await loadVoices();
+  }catch(e){ toast("Save voice error: "+e.message); }
+}
+
+async function uploadVoices(){
+  const fileInput = el("voiceFile");
+  if (!fileInput.files.length){
+    toast("Оберіть файл .txt");
+    return;
   }
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
+  try{
+    const res = await fetch("/admin_api/voices/upload", {
+      method: "POST",
+      body: formData
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.msg || "Upload error");
+    toast(`Успішно додано ${data.added} голосів`);
+    resetVoiceForm();
+    await loadVoices();
+  }catch(e){
+    toast("Upload voices error: "+e.message);
+  }
+}
+
+async function deleteVoice(id){
+  if (!confirm("Видалити голос?")) return;
+  try{
+    await jfetch(`/admin_api/voices/${id}`, "DELETE");
+    await loadVoices();
+  }catch(e){ toast("Delete voice error: "+e.message); }
+}
+
+// ================= Activity Logs =================
+async function loadLogs(){
+  try{
+    const q = encodeURIComponent(el("logSearch").value || "");
+    const minChars = el("logMinChars").value || "";
+    const maxChars = el("logMaxChars").value || "";
+    const action = el("logAction").value || "";
+    const dateFrom = el("logDateFrom").value || "";
+    const dateTo = el("logDateTo").value || "";
+    let url = `/admin_api/logs?q=${q}`;
+    if (minChars) url += `&min_chars=${minChars}`;
+    if (maxChars) url += `&max_chars=${maxChars}`;
+    if (action) url += `&action=${action}`;
+    if (dateFrom) url += `&date_from=${dateFrom}`;
+    if (dateTo) url += `&date_to=${dateTo}`;
+    
+    const data = await jfetch(url);
+    const tb = el("logsTbody");
+    tb.innerHTML = "";
+    data.forEach(row=>{
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${row.id}</td>
+        <td>${row.license_id}</td>
+        <td>${row.action}</td>
+        <td>${row.char_count}</td>
+        <td>${row.details}</td>
+        <td class="small">${row.created_at ? new Date(row.created_at).toLocaleString() : ""}</td>`;
+      tb.appendChild(tr);
+    });
+  }catch(e){ toast("Load logs error: "+e.message); }
+}
+
+// ================= Config =================
+async function loadConfig(){
+  try{
+    const c = await jfetch(`/admin_api/config`);
+    el("cfgLatest").value = c.latest_version || "";
+    el("cfgForce").checked = !!c.force_update;
+    el("cfgMaint").checked = !!c.maintenance;
+    el("cfgMaintMsg").value = c.maintenance_message || "";
+    el("cfgDesc").value = c.update_description || "";
+    el("cfgLinks").value = c.update_links || "";
+  }catch(e){ toast("Load config error: "+e.message); }
+}
+
+async function saveConfig(){
+  try{
+    await jfetch(`/admin_api/config`, "PUT", {
+      latest_version: el("cfgLatest").value.trim(),
+      force_update: el("cfgForce").checked,
+      maintenance: el("cfgMaint").checked,
+      maintenance_message: el("cfgMaintMsg").value,
+      update_description: el("cfgDesc").value,
+      update_links: el("cfgLinks").value
+    });
+    toast("Збережено ✅");
+  }catch(e){ toast("Save config error: "+e.message); }
+}
+
+async function downloadBackup(){
+  try{
+    const res = await fetch("/admin_api/backup");
+    if (!res.ok) throw new Error("Backup download failed");
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = res.headers.get("Content-Disposition")?.split("filename=")[1] || "amulet_backup.json";
+    a.click();
+    window.URL.revokeObjectURL(url);
+  }catch(e){
+    toast("Backup error: "+e.message);
+  }
+}
+
+async function downloadLicensesBackup(){
+  try{
+    const res = await fetch("/admin_api/backup/licenses");
+    if (!res.ok) throw new Error("Licenses backup download failed");
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = res.headers.get("Content-Disposition")?.split("filename=")[1] || "amulet_licenses_backup.json";
+    a.click();
+    window.URL.revokeObjectURL(url);
+  }catch(e){
+    toast("Licenses backup error: "+e.message);
+  }
+}
+
+// ================= API Console =================
+function formatJson(){
+  try{
+    const obj = JSON.parse(el("apiPayload").value || "{}");
+    el("apiPayload").value = JSON.stringify(obj, null, 2);
+  }catch(e){ toast("JSON invalid"); }
+}
+
+async function runConsole(){
+  try{
+    const action = (el("apiAction").value || "").trim();
+    const payload = (el("apiPayload").value || "{}").trim();
+    const body = payload ? JSON.parse(payload) : {};
+    if (action) body.action = action;
+    const res = await jfetch("/api", "POST", body);
+    el("apiResult").textContent = JSON.stringify(res, null, 2);
+  }catch(e){ el("apiResult").textContent = "Error: "+e.message; }
+}
+
+// ---- on load ----
+window.addEventListener("DOMContentLoaded", async ()=>{
+  await Promise.all([loadLicenses(), loadApiKeys(), loadVoices(), loadConfig(), loadLogs()]);
 });
