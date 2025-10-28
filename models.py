@@ -4,44 +4,36 @@ from datetime import datetime
 db = SQLAlchemy()
 
 class License(db.Model):
-    __tablename__ = 'licenses'
     id = db.Column(db.Integer, primary_key=True)
-    key = db.Column(db.String(64), unique=True, nullable=False, index=True)
-    mac_id = db.Column(db.String(64), index=True)
-    credit = db.Column(db.Integer, nullable=False, default=0)
-    active = db.Column(db.Boolean, nullable=False, default=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    key = db.Column(db.String(255), unique=True, nullable=False)
+    mac_id = db.Column(db.String(255))
+    credit = db.Column(db.Integer, default=0)
+    active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class ApiKey(db.Model):
-    __tablename__ = 'api_keys'
     id = db.Column(db.Integer, primary_key=True)
-    api_key = db.Column(db.String(128), unique=True, nullable=False, index=True)
-    status = db.Column(db.String(16), nullable=False, default="active")  # active|inactive|blocked
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    api_key = db.Column(db.String(255), unique=True, nullable=False)
+    status = db.Column(db.String(50), default="active")
 
 class Voice(db.Model):
-    __tablename__ = 'voices'
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    voice_id = db.Column(db.String(100), nullable=False)
-    active = db.Column(db.Boolean, nullable=False, default=True)
+    name = db.Column(db.String(100))
+    voice_id = db.Column(db.String(255))
 
 class Config(db.Model):
-    __tablename__ = 'config'
     id = db.Column(db.Integer, primary_key=True)
-    latest_version = db.Column(db.String(20), default="1.0.0")
+    latest_version = db.Column(db.String(50), default="2.4.0")
     force_update = db.Column(db.Boolean, default=False)
     maintenance = db.Column(db.Boolean, default=False)
-    maintenance_message = db.Column(db.Text, default="")
-    update_description = db.Column(db.Text, default="")
-    update_links = db.Column(db.Text, default="")
+    maintenance_message = db.Column(db.String(500), default="")
+    update_description = db.Column(db.String(500), default="")
+    update_links = db.Column(db.String(500), default="")
 
 class ActivityLog(db.Model):
-    __tablename__ = 'activity_log'
     id = db.Column(db.Integer, primary_key=True)
-    license_id = db.Column(db.Integer, db.ForeignKey('licenses.id'))
-    action = db.Column(db.String(100), nullable=False)  # debit|refund|adjust_credit|...
+    license_key = db.Column(db.String(255))
+    action = db.Column(db.String(100))
     char_count = db.Column(db.Integer)
-    details = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
