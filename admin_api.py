@@ -143,9 +143,9 @@ def create_voice():
     db.session.add(v); db.session.commit()
     return jsonify({"id": v.id}), 201
 
-@admin_bp.put("/voices/<int:vid>")
-def update_voice(vid):
-    v = Voice.query.get_or_404(vid)
+@admin_bp.put("/voices/<int:v_id>")
+def update_voice(v_id):
+    v = Voice.query.get_or_404(v_id)
     data = request.get_json(force=True)
     if "name" in data: v.name = (data.get("name") or "").strip()
     if "voice_id" in data: v.voice_id = (data.get("voice_id") or "").strip()
@@ -153,9 +153,9 @@ def update_voice(vid):
     db.session.commit()
     return jsonify({"ok": True})
 
-@admin_bp.delete("/voices/<int:vid>")
-def delete_voice(vid):
-    v = Voice.query.get_or_404(vid)
+@admin_bp.delete("/voices/<int:v_id>")
+def delete_voice(v_id):
+    v = Voice.query.get_or_404(v_id)
     db.session.delete(v); db.session.commit()
     return jsonify({"ok": True})
 
