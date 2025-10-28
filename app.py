@@ -9,38 +9,31 @@ from api import api_bp
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+CORS(app)
 
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret')
+# SECRET
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret")
 
-# Normalize Railway postgres scheme if needed
-db_url = os.getenv('DATABASE_URL')
-if db_url and db_url.startswith('postgres://'):
-    db_url = db_url.replace('postgres://', 'postgresql://', 1)
+# DATABASE
+db_url = os.getenv("DATABASE_URL")
+if db_url and db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
 
 if db_url:
-    app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+    app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 else:
-    os.makedirs('instance', exist_ok=True)
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///instance/db.sqlite'
+    os.makedirs("instance", exist_ok=True)
+    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///instance/db.sqlite"
 
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-# CORS (keep open for /api, restrict admin if needed)
-CORS(app, resources={
-    r"/api": {"origins": "*"},
-    r"/admin_api/*": {"origins": "*"},
-})
-
-# Init DB
 db.init_app(app)
 
-# Basic Auth for admin
-ADMIN_USER = os.getenv('ADMIN_USER')
-ADMIN_PASS = os.getenv('ADMIN_PASS')
+# ADMIN AUTH
+ADMIN_USER = os.getenv("ADMIN_USER", "admin")
+ADMIN_PASS = os.getenv("ADMIN_PASS", "1234")
 
 def require_admin():
-    if not ADMIN_USER or not ADMIN_PASS:
-        return  # auth disabled
     auth = request.authorization
     if not auth or auth.username != ADMIN_USER or auth.password != ADMIN_PASS:
         return jsonify({"error": "auth_required"}), 401, {
@@ -50,17 +43,16 @@ def require_admin():
 @app.before_request
 def protect_admin():
     path = request.path or ""
-    # public: static, health, api (root захищається у index())
-    if path.startswith("/static") or path == "/healthz" or path == "/api":
-        return
     if path.startswith("/admin_api"):
         r = require_admin()
-        if r: return r
+        if r:
+            return r
 
 @app.route("/")
 def index():
     r = require_admin()
-    if r: return r
+    if r:
+        return r
     return app.send_static_file("admin.html")
 
 @app.route("/healthz")
@@ -69,9 +61,9 @@ def healthz():
 
 # Blueprints
 app.register_blueprint(admin_bp, url_prefix="/admin_api")
-app.register_blueprint(api_bp)  # /api
+app.register_blueprint(api_bp)
 
-# Bootstrap DB on first run
+# Init DB
 with app.app_context():
     db.create_all()
     if not Config.query.first():
@@ -79,5 +71,4 @@ with app.app_context():
         db.session.commit()
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "5000"))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")))
