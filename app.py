@@ -1,90 +1,55 @@
-import os
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify, request, send_from_directory, Response
+from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
-from werkzeug.middleware.proxy_fix import ProxyFix
+from functools import wraps
+import os
 
 from models import db, License, ApiKey, Voice, Config, ActivityLog
-from admin_api import admin_bp
-from api import api_bp
 
-app = Flask(__name__, static_folder='static', static_url_path='/static')
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+app = Flask(__name__)
+CORS(app)
 
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret')
+# 🔧 DATABASE CONFIG
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///amulet.db")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://")
 
-# =======================
-# DATABASE CONFIG
-# =======================
-db_url = os.getenv('DATABASE_URL')
-if db_url:
-    db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
-    app.config['SQLALCHEMY_DATABASE_URI'] = db_url
-    print(f"✅ Using PostgreSQL: {db_url}")
-else:
-    os.makedirs('instance', exist_ok=True)
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///instance/db.sqlite'
-    print("⚙️  Using local SQLite database")
+app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-# =======================
-# CORS
-# =======================
-CORS(app, resources={
-    r"/api/*": {"origins": "*"},
-    r"/admin_api/*": {"origins": "*"},
-})
-
-# =======================
-# INIT DB
-# =======================
 db.init_app(app)
 
-ADMIN_USER = os.getenv('ADMIN_USER', 'admin')
-ADMIN_PASS = os.getenv('ADMIN_PASS', '1234')
+with app.app_context():
+    db.create_all()
 
-def require_admin():
-    if not ADMIN_USER or not ADMIN_PASS:
-        return
-    auth = request.authorization
-    if not auth or auth.username != ADMIN_USER or auth.password != ADMIN_PASS:
-        return jsonify({"error": "auth_required"}), 401, {
-            "WWW-Authenticate": 'Basic realm="Amulet Admin"'
-        }
+# --- BASIC AUTH ---
+def check_auth(username, password):
+    return username == os.getenv("ADMIN_USER", "admin") and password == os.getenv("ADMIN_PASS", "1234")
 
-@app.before_request
-def protect_admin():
-    path = request.path or ""
-    if path.startswith("/static") or path == "/healthz" or path.startswith("/api"):
-        return
-    if path.startswith("/admin_api"):
-        r = require_admin()
-        if r: return r
+def authenticate():
+    return Response('Login Required', 401, {'WWW-Authenticate': 'Basic realm="Amulet Admin"'})
+
+def requires_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth = request.authorization
+        if not auth or not check_auth(auth.username, auth.password):
+            return authenticate()
+        return f(*args, **kwargs)
+    return decorated
 
 @app.route("/")
-def index():
-    r = require_admin()
-    if r: return r
-    return app.send_static_file("admin.html")
+def home():
+    return jsonify({"message": "Amulet Backend is running ✅"})
 
-@app.route("/healthz")
-def healthz():
-    return "ok", 200
+@app.route("/admin")
+@requires_auth
+def admin():
+    return send_from_directory('.', 'admin.html')
 
-# Blueprints
-app.register_blueprint(admin_bp, url_prefix="/admin_api")
-app.register_blueprint(api_bp, url_prefix="/api")
-
-with app.app_context():
-    try:
-        db.create_all()
-        if not Config.query.first():
-            db.session.add(Config())
-            db.session.commit()
-        print("✅ Database initialized successfully.")
-    except Exception as e:
-        print(f"❌ DB init error: {e}")
+@app.route("/<path:path>")
+def static_proxy(path):
+    return send_from_directory('.', path)
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "5000"))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=5000)
